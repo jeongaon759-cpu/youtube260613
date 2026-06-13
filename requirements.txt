@@ -1,10 +1,4 @@
 streamlit
 google-api-python-client
 pandas
-numpy
 plotly
-wordcloud
-matplotlib
-konlpy
-jpype1
-scikit-learn
