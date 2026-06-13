@@ -1,22 +1,19 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import re
+from collections import Counter
 
 from googleapiclient.discovery import build
-
-from collections import Counter
 
 import plotly.express as px
 
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 
-from konlpy.tag import Okt
 
-# --------------------
+# =====================================================
 # 페이지 설정
-# --------------------
+# =====================================================
 
 st.set_page_config(
     page_title="유튜브 댓글 심층 분석기",
@@ -25,11 +22,12 @@ st.set_page_config(
 )
 
 st.title("📊 유튜브 댓글 심층 분석기")
-st.caption("YouTube API 기반 댓글 감성 분석 + 한글 워드클라우드")
+st.caption("YouTube API 기반 댓글 수집 및 여론 분석")
 
-# --------------------
-# API
-# --------------------
+
+# =====================================================
+# API KEY
+# =====================================================
 
 API_KEY = st.secrets["YOUTUBE_API_KEY"]
 
@@ -39,9 +37,10 @@ youtube = build(
     developerKey=API_KEY
 )
 
-# --------------------
-# 영상 ID 추출
-# --------------------
+
+# =====================================================
+# 유튜브 ID 추출
+# =====================================================
 
 def extract_video_id(url):
 
@@ -51,17 +50,19 @@ def extract_video_id(url):
         r"shorts\/([^?]+)"
     ]
 
-    for p in patterns:
-        match = re.search(p, url)
+    for pattern in patterns:
+
+        match = re.search(pattern, url)
 
         if match:
             return match.group(1)
 
     return None
 
-# --------------------
+
+# =====================================================
 # 댓글 수집
-# --------------------
+# =====================================================
 
 def get_comments(video_id, max_comments=1000):
 
@@ -74,7 +75,7 @@ def get_comments(video_id, max_comments=1000):
         textFormat="plainText"
     )
 
-    while request and len(comments) < max_comments:
+    while request:
 
         response = request.execute()
 
@@ -87,6 +88,12 @@ def get_comments(video_id, max_comments=1000):
                 "likes": snippet["likeCount"]
             })
 
+            if len(comments) >= max_comments:
+                break
+
+        if len(comments) >= max_comments:
+            break
+
         request = youtube.commentThreads().list_next(
             request,
             response
@@ -94,23 +101,29 @@ def get_comments(video_id, max_comments=1000):
 
     return pd.DataFrame(comments)
 
-# --------------------
-# 감성분석
-# --------------------
+
+# =====================================================
+# 감성 사전
+# =====================================================
 
 positive_words = [
-    "좋다","최고","멋지다","감동","재밌다","행복",
-    "대박","훌륭","추천","사랑","웃기다"
+    "좋다", "최고", "멋지다", "감동", "재밌다",
+    "행복", "대박", "훌륭", "추천", "사랑",
+    "웃기다", "잘한다", "응원", "감사"
 ]
 
 negative_words = [
-    "별로","싫다","최악","짜증","화난다",
-    "노잼","실망","구리다","아쉽다"
+    "별로", "싫다", "최악", "짜증", "화난다",
+    "실망", "구리다", "아쉽다", "노잼",
+    "답답", "억지", "망했다"
 ]
+
 
 def sentiment(text):
 
     score = 0
+
+    text = str(text)
 
     for word in positive_words:
         if word in text:
@@ -126,53 +139,95 @@ def sentiment(text):
     elif score < 0:
         return "부정"
 
-    return "중립"
+    else:
+        return "중립"
 
-# --------------------
-# 형태소 분석
-# --------------------
 
-okt = Okt()
+# =====================================================
+# 키워드 추출
+# =====================================================
 
-def extract_nouns(texts):
+STOPWORDS = {
+    "진짜", "그냥", "너무", "정말",
+    "영상", "댓글", "사람", "생각",
+    "이번", "이거", "저거", "그것",
+    "에서", "으로", "그리고", "입니다",
+    "있는", "하는", "같은", "근데",
+    "하면", "하는데", "왜냐하면"
+}
 
-    nouns = []
+
+def extract_keywords(texts):
+
+    words = []
 
     for text in texts:
 
-        try:
-            nouns.extend(
-                okt.nouns(str(text))
-            )
+        found = re.findall(
+            r"[가-힣]{2,}",
+            str(text)
+        )
 
-        except:
-            pass
+        words.extend(found)
 
-    nouns = [
-        n for n in nouns
-        if len(n) >= 2
+    words = [
+        word for word in words
+        if word not in STOPWORDS
     ]
 
-    return nouns
+    return words
 
-# --------------------
+
+# =====================================================
+# 워드클라우드
+# =====================================================
+
+def generate_wordcloud(freq_dict):
+
+    try:
+
+        wc = WordCloud(
+            font_path="NanumGothic.ttf",
+            width=1200,
+            height=600,
+            background_color="white"
+        ).generate_from_frequencies(freq_dict)
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        ax.imshow(wc)
+        ax.axis("off")
+
+        st.pyplot(fig)
+
+    except Exception:
+
+        st.error(
+            "프로젝트 폴더에 NanumGothic.ttf 파일을 업로드해주세요."
+        )
+
+
+# =====================================================
 # UI
-# --------------------
+# =====================================================
 
 url = st.text_input(
-    "유튜브 링크 입력"
+    "유튜브 링크 입력",
+    placeholder="https://www.youtube.com/watch?v=..."
 )
 
 if st.button("분석 시작"):
 
     if not url:
-        st.warning("링크를 입력하세요.")
+
+        st.warning("유튜브 링크를 입력해주세요.")
         st.stop()
 
     video_id = extract_video_id(url)
 
     if not video_id:
-        st.error("유효한 유튜브 링크가 아닙니다.")
+
+        st.error("올바른 유튜브 링크가 아닙니다.")
         st.stop()
 
     with st.spinner("댓글 수집 중..."):
@@ -180,36 +235,56 @@ if st.button("분석 시작"):
         df = get_comments(video_id)
 
     if len(df) == 0:
-        st.error("댓글을 찾을 수 없습니다.")
+
+        st.error("댓글이 없습니다.")
         st.stop()
 
-    st.success(
-        f"{len(df):,}개의 댓글 수집 완료"
-    )
+    st.success(f"{len(df):,}개의 댓글을 수집했습니다.")
 
-    # --------------------
+    # =================================================
+    # 기본 통계
+    # =================================================
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+
+        st.metric(
+            "댓글 수",
+            f"{len(df):,}"
+        )
+
+    with col2:
+
+        st.metric(
+            "총 좋아요",
+            f"{df['likes'].sum():,}"
+        )
+
+    # =================================================
     # 감성분석
-    # --------------------
+    # =================================================
+
+    st.subheader("😊 감성 분석")
 
     df["감성"] = df["comment"].apply(sentiment)
 
-    sentiment_count = (
+    sentiment_df = (
         df["감성"]
         .value_counts()
         .reset_index()
     )
 
-    sentiment_count.columns = [
+    sentiment_df.columns = [
         "감성",
         "개수"
     ]
 
-    st.subheader("😊 감성 분석")
-
     fig = px.pie(
-        sentiment_count,
+        sentiment_df,
         names="감성",
-        values="개수"
+        values="개수",
+        hole=0.4
     )
 
     st.plotly_chart(
@@ -217,11 +292,11 @@ if st.button("분석 시작"):
         use_container_width=True
     )
 
-    # --------------------
+    # =================================================
     # 좋아요 TOP 댓글
-    # --------------------
+    # =================================================
 
-    st.subheader("🔥 좋아요 TOP 댓글")
+    st.subheader("🔥 좋아요 TOP 10 댓글")
 
     top_comments = (
         df.sort_values(
@@ -236,21 +311,21 @@ if st.button("분석 시작"):
         use_container_width=True
     )
 
-    # --------------------
-    # 단어 분석
-    # --------------------
+    # =================================================
+    # 키워드 분석
+    # =================================================
 
     st.subheader("📌 핵심 키워드")
 
-    nouns = extract_nouns(
+    keywords = extract_keywords(
         df["comment"]
     )
 
-    word_count = Counter(nouns)
+    counter = Counter(keywords)
 
     keyword_df = pd.DataFrame(
-        word_count.most_common(20),
-        columns=["단어","빈도"]
+        counter.most_common(20),
+        columns=["단어", "빈도"]
     )
 
     fig2 = px.bar(
@@ -264,48 +339,32 @@ if st.button("분석 시작"):
         use_container_width=True
     )
 
-    # --------------------
+    # =================================================
     # 워드클라우드
-    # --------------------
+    # =================================================
 
     st.subheader("☁️ 워드클라우드")
 
-    # 한글 폰트 경로
-    font_path = "NanumGothic.ttf"
+    generate_wordcloud(counter)
 
-    try:
+    # =================================================
+    # 자주 등장한 단어
+    # =================================================
 
-        wc = WordCloud(
-            font_path=font_path,
-            width=1200,
-            height=600,
-            background_color="white"
-        ).generate_from_frequencies(
-            word_count
-        )
-
-        fig3, ax = plt.subplots(
-            figsize=(12,6)
-        )
-
-        ax.imshow(wc)
-        ax.axis("off")
-
-        st.pyplot(fig3)
-
-    except Exception:
-
-        st.error(
-            "NanumGothic.ttf 파일을 프로젝트 루트에 업로드하세요."
-        )
-
-    # --------------------
-    # 원본 댓글
-    # --------------------
-
-    st.subheader("💬 전체 댓글")
+    st.subheader("📊 단어 빈도 순위")
 
     st.dataframe(
-        df,
+        keyword_df,
         use_container_width=True
     )
+
+    # =================================================
+    # 전체 댓글
+    # =================================================
+
+    with st.expander("전체 댓글 보기"):
+
+        st.dataframe(
+            df,
+            use_container_width=True
+        )
