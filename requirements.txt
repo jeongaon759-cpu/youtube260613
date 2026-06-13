@@ -6,5 +6,5 @@ plotly
 wordcloud
 matplotlib
 konlpy
+jpype1
 scikit-learn
-pillow
